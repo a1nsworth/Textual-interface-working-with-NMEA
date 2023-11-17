@@ -1,0 +1,16 @@
+GPGGA_GPRMC_PATH = 'resources/2019012041a.txt'
+ALL_FORMATS_1_PATH = 'resources/202109301.txt'
+ALL_FORMATS_2_PATH = 'resources/202109302.txt'
+
+FILE_PATHS = {
+    'GPGGA_GPRMC': GPGGA_GPRMC_PATH,
+    'ALL_FORMATS_1': ALL_FORMATS_1_PATH,
+    'ALL_FORMATS_2': ALL_FORMATS_2_PATH,
+}
+
+FORMATS = {
+    0: 'GPGGA',
+    1: 'GPRMC',
+    2: 'GPGSA',
+    3: 'GPGSV',
+}
