@@ -1,5 +1,6 @@
 from abc import abstractmethod
 import math
+from datetime import datetime
 
 from patterns.singleton import Singleton
 from application.constants import *
@@ -37,6 +38,9 @@ class DataGPGGAGPRMC(Data):
             'GPRMC': self.__get_parse_gprmc(),
         }
 
+    def __getitem__(self, item: str) -> pd.DataFrame:
+        return self._df_formats[item]
+
     @staticmethod
     def get_dec_degree(x):
         return math.modf(x)[1] // 100 + (math.modf(x)[1] % 100) / 60 + (math.modf(x)[0] * 60) / 3600
@@ -56,8 +60,11 @@ class DataGPGGAGPRMC(Data):
 
     def __get_parse_gpgga(self):
         gpgga = self._df[self._df['Message ID'] == 'GPGGA'].copy(deep=True)
-        gpgga['Time'] = pd.to_datetime(gpgga['Time'], format='%H%M%S').astype(str).apply(
+        series_to_date_time = pd.to_datetime(gpgga['Time'], format='%H%M%S')
+        gpgga['DateTime'] = series_to_date_time
+        gpgga['Time'] = series_to_date_time.astype(str).apply(
             lambda x: x.split(' ')[-1])
+
         gpgga['Latitude'] = gpgga['Latitude'].apply(lambda x: float(x))
         gpgga['Longitude'] = gpgga['Longitude'].apply(lambda x: float(x))
 
@@ -85,6 +92,10 @@ class DataGPGGAGPRMC(Data):
         gprmc['Longitude'] = self.__latitude_and_longitude_to_dec(gprmc['Longitude'])
 
         return gprmc.reset_index(drop=True)
+
+    @property
+    def df_formats(self):
+        return self._df_formats
 
     @property
     def df(self):
