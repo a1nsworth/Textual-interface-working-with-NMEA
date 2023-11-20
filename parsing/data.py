@@ -1,5 +1,8 @@
 from abc import abstractmethod
 import math
+from datetime import datetime
+
+import numpy
 
 from patterns.singleton import Singleton
 from application.constants import *
@@ -8,9 +11,9 @@ import pandas as pd
 
 
 class Data(metaclass=Singleton):
-    def __init__(self, path):
+    def __init__(self, path: str, df_formats: dict[str: pd.DataFrame] | None = None):
         self._path = path
-        self._df_formats = None
+        self._df_formats = df_formats
 
     @property
     def path(self):
@@ -21,11 +24,22 @@ class Data(metaclass=Singleton):
         pass
 
     @abstractmethod
+    def __getitem__(self, item: str) -> pd.DataFrame | None:
+        try:
+            return self._df_formats[item]
+        except KeyError:
+            return None
+
+    @abstractmethod
     def get_df_by_key(self, key: str):
         pass
 
     def get_class_by_path(self, path: str):
         return self if path == self._path else None
+
+    @staticmethod
+    def get_dec_degree(x):
+        return math.modf(x)[1] // 100 + (math.modf(x)[1] % 100) / 60 + (math.modf(x)[0] * 60) / 3600
 
 
 class DataGPGGAGPRMC(Data):
@@ -36,10 +50,6 @@ class DataGPGGAGPRMC(Data):
             'GPGGA': self.__get_parse_gpgga(),
             'GPRMC': self.__get_parse_gprmc(),
         }
-
-    @staticmethod
-    def get_dec_degree(x):
-        return math.modf(x)[1] // 100 + (math.modf(x)[1] % 100) / 60 + (math.modf(x)[0] * 60) / 3600
 
     def __latitude_and_longitude_to_dec(self, serial: pd.Series):
         return serial.copy(deep=True).apply(lambda x: float(x)).apply(self.get_dec_degree)
@@ -56,8 +66,11 @@ class DataGPGGAGPRMC(Data):
 
     def __get_parse_gpgga(self):
         gpgga = self._df[self._df['Message ID'] == 'GPGGA'].copy(deep=True)
-        gpgga['Time'] = pd.to_datetime(gpgga['Time'], format='%H%M%S').astype(str).apply(
+        series_to_date_time = pd.to_datetime(gpgga['Time'], format='%H%M%S')
+        gpgga['DateTime'] = series_to_date_time
+        gpgga['Time'] = series_to_date_time.astype(str).apply(
             lambda x: x.split(' ')[-1])
+
         gpgga['Latitude'] = gpgga['Latitude'].apply(lambda x: float(x))
         gpgga['Longitude'] = gpgga['Longitude'].apply(lambda x: float(x))
 
@@ -87,6 +100,10 @@ class DataGPGGAGPRMC(Data):
         return gprmc.reset_index(drop=True)
 
     @property
+    def df_formats(self):
+        return self._df_formats
+
+    @property
     def df(self):
         return self._df
 
@@ -111,13 +128,128 @@ class DataGPGGAGPRMC(Data):
         return self if path == self.path else None
 
 
-class DataGetterByPath(metaclass=Singleton):
-    def __init__(self, data: list = None):
-        self.data = [DataGPGGAGPRMC(GPGGA_GPRMC_PATH)] if data is None else data
+class DataGPGSVGPRMCGPGSA(Data):
+    def __init__(self, path: str = ALL_FORMATS_1_PATH):
+        super().__init__(path)
+        self._df = self.__get_parse_from_csv()
+        self._df_formats = {
+            'GPGSV': self.__get_parse_gpgsv(),
+            'GPRMC': self.__get_parse_gprmc(),
+            'GPGSA': self.__get_parse_gpgsa(),
+        }
 
-    def get_data_class_by_path(self, path):
-        for data in self.data:
-            data_class = data.get_class_by_path(path)
+    @staticmethod
+    def __parsing_datatype_gpgsv(df: pd.DataFrame):
+        # parsing with the processing of cases when we do not have all 4 channels (1-3 channels)
+        # also edit data in the checksum
+        for row in range(len(df)):
+            # if we have 4 channels
+            if df.iloc[row, 19] is not numpy.nan:
+                # data like aa*bb => aa locate in SNR, bb locate in Checksum
+                if str(df.iloc[row, 19])[0] == '*':
+                    df.iloc[row, 20] = str(df.iloc[row, 19])
+                    df.iloc[row, 19] = numpy.nan
+                else:
+                    df.iloc[row, 20] = '*' + str(df.iloc[row, 19]).split('*')[1]
+                    df.iloc[row, 19] = str(df.iloc[row, 19]).split('*')[0]
+            # if we have 3 channels
+            elif df.iloc[row, 15] is not numpy.nan:
+                if str(df.iloc[row, 15])[0] == '*':
+                    df.iloc[row, 20] = str(df.iloc[row, 15])
+                    df.iloc[row, 15] = numpy.nan
+                else:
+                    df.iloc[row, 20] = '*' + str(df.iloc[row, 15]).split('*')[1]
+                    df.iloc[row, 15] = str(df.iloc[row, 15]).split('*')[0]
+            # if we have 2 channels
+            elif df.iloc[row, 11] is not numpy.nan:
+                if str(df.iloc[row, 11])[0] == '*':
+                    df.iloc[row, 20] = str(df.iloc[row, 11])
+                    df.iloc[row, 11] = numpy.nan
+                else:
+                    df.iloc[row, 20] = '*' + str(df.iloc[row, 11]).split('*')[1]
+                    df.iloc[row, 11] = str(df.iloc[row, 11]).split('*')[0]
+            # if we have only one channels
+            elif df.iloc[row, 7] is not numpy.nan:
+                if str(df.iloc[row, 7])[0] == '*':
+                    df.iloc[row, 20] = str(df.iloc[row, 7])
+                    df.iloc[row, 7] = numpy.nan
+                else:
+                    df.iloc[row, 20] = '*' + str(df.iloc[row, 7]).split('*')[1]
+                    df.iloc[row, 7] = str(df.iloc[row, 7]).split('*')[0]
+
+    def __convert_data_gprmc(self, df):
+        df['Latitude'] = pd.to_numeric(df['Latitude']).apply(lambda x: self.get_dec_degree(x))
+        df['Longitude'] = pd.to_numeric(df['Longitude']).apply(lambda x: self.get_dec_degree(x))
+        df['Time'] = pd.to_numeric(df['Time']).apply(lambda s: self.get_time_as_seconds(s))
+        df['Speed'] = pd.to_numeric(df['Speed'])
+
+        # edit Magnetic and Checksum data
+        df['Magnetic'] = df['Checksum'].apply(lambda x: x.split('*')[0])
+        df['Checksum'] = '*' + df['Checksum'].apply(lambda x: x.split('*')[1])
+
+    @staticmethod
+    def get_time_as_seconds(x):
+        t = str(x)
+        if t[5] == '.':
+            t = '0' + t
+
+        return int(t[0] + t[1]) * 3600 + int(t[2] + t[3]) * 60 + int(t[4] + t[5])
+
+    def __get_parse_from_csv(self):
+        return pd.read_csv(self.path, sep=',',
+                           names=['Message ID', 'Number of Messages', 'Message Number', 'Satellites in View',
+                                  'Satellite ID1',
+                                  'Elevation1', 'Azimuth1', 'SNR1', 'Satellite ID2', 'Elevation2', 'Azimuth2', 'SNR2',
+                                  'Satellite ID3', 'Elevation3', 'Azimuth3', 'SNR3', 'Satellite ID4', 'Elevation4',
+                                  'Azimuth4',
+                                  'SNR4', 'Checksum'])
+
+    def __get_parse_gpgsv(self):
+        df = self._df[self._df[self._df.columns[0]] == '$GPGSV'].copy()
+        self.__parsing_datatype_gpgsv(df)
+        return df
+
+    def __get_parse_gprmc(self):
+        df = self._df[self._df[self._df.columns[0]] == '$GPRMC'].iloc[:, 0:13].copy()
+        df.iloc[:, 11] = df.iloc[:, 12]
+        df = df.iloc[:, 0:12]
+        df.columns = ['Message ID', 'Time', 'Status', 'Latitude', 'N/S', 'Longitude', 'E/W', 'Speed',
+                      'Course', 'Date', 'Magnetic', 'Checksum']
+
+        self.__convert_data_gprmc(df)
+        return df
+
+    def __get_parse_gpgsa(self):
+        df = self._df[self._df[self._df.columns[0]] == '$GPGSA'].iloc[:, 0:19].copy()
+        df.iloc[:, 18] = df.iloc[:, 17]
+        df.columns = ['Message ID', 'Mode1', 'Mode2', 'Satellite Used1', 'Satellite Used2', 'Satellite Used3',
+                      'Satellite Used4', 'Satellite Used5', 'Satellite Used6', 'Satellite Used7', 'Satellite Used8',
+                      'Satellite Used9', 'Satellite Used10', 'Satellite Used11', 'Satellite Used12', 'PDOP', 'HDOP',
+                      'VDOP', 'Checksum']
+
+        df['VDOP'] = df['Checksum'].apply(lambda x: x.split('*')[0])
+        df['Checksum'] = '*' + df['Checksum'].apply(lambda x: x.split('*')[1])
+
+        return df
+
+    def available_formats(self):
+        return len(self._df_formats.values())
+
+    def get_df_by_key(self, key: str):
+        return self[key]
+
+
+class DataGetterByPath(metaclass=Singleton):
+    def __init__(self):
+        self._data = [DataGPGGAGPRMC(), DataGPGSVGPRMCGPGSA(ALL_FORMATS_1_PATH),
+                      DataGPGSVGPRMCGPGSA(ALL_FORMATS_2_PATH)]
+
+    def __getitem__(self, item):
+        for data in self._data:
+            data_class = data[item]
             if data_class is not None:
                 return data_class
         return None
+
+    def get_data_class_by_path(self, path):
+        return self[path]
