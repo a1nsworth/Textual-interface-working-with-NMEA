@@ -11,8 +11,11 @@ from textual.message import Message
 from textual.widgets import TabbedContent, TabPane, Select, Button, Input
 from textual_datepicker import DateSelect
 
+import plotext as pltx
+
+from parsing.data import DataGPGSVGPRMCGPGSA, DataGetterByPath, DataGPGGAGPRMC
 from application.constants import FILE_PATHS, FORMATS
-from data_tables.data_table import DataTableGPGGA, DataTableFormat
+from data_tables.data_table import DataTableGPGGA, DataTableFormat, DataTableGetterByPath
 from plot_text_plots.plot_text_plot import PlotText, PlotTextGPGGA, PlotTextGPRMC
 from plot.plot_creator import PlotArgsCreatorGPGGAGPRMC
 
@@ -143,15 +146,17 @@ class DataTab(TabPane):
             self.post_message(self.ErrorSelectPath())
             return
 
-        if table_format.value not in table.BASE_DF.available_formats():
-            self.post_message(self.ErrorNoAvailableFormat(table_format.value, table.BASE_DF.available_formats()))
+        df = DataTableGetterByPath().get_data_class_by_path(path_file.value)
+
+        if df is None:
+            self.post_message(self.ErrorNoAvailableFormat(table_format.value, table.df.available_formats()))
             return
-        if path_file.value != table.BASE_DF.path:
-            self.post_message(self.ErrorNoAvailableImplementation(path_file.value))
-            return
+        if path_file.value != table.df.path:
+            # self.post_message(self.ErrorNoAvailableImplementation(path_file.value))
+            # return
+            pass
 
         table.clear(True)
-        df = table.BASE_DF.get_df_by_key(table_format.value)
         table.add_columns(*df.columns.tolist())
         table.add_rows(df.values.tolist())
 
@@ -189,7 +194,7 @@ class PlotTab(TabPane):
                 layout: grid;
                 grid-size: 3 3;
                 grid-columns: 3fr 1fr 1fr;
-                grid-rows: 5fr 5fr 1fr;
+                grid-rows: 6fr 6fr 1fr;
                 content-align: center middle;
             }
 
@@ -231,16 +236,21 @@ class PlotTab(TabPane):
 
                                 with Container(id='data_select_gprmc_container_begin'):
                                     yield DateSelect(placeholder="Выберите дату начала",
-                                                     format="YYYY-MM-DD",
-                                                     picker_mount="#container_tab_plot_gpgga",
+                                                     format="DD-MM-YYYY",
+                                                     picker_mount="#container_tab_plot_gprmc",
                                                      id='gprmc_date_selector_begin')
-                                yield Input(placeholder='Введите время в формате: HH:MM:SS')
+                                yield Input(placeholder='Введите время в формате: HH:MM:SS',
+                                            id='time_begin_gprmc',
+                                            )
 
                                 with Container(id='data_select_gprmc_container_end'):
                                     yield DateSelect(placeholder="Выберите дату окончания",
-                                                     format="YYYY-MM-DD",
-                                                     picker_mount="#container_tab_plot_gprmc")
-                                yield Input(placeholder='Введите время в формате: HH:MM:SS')
+                                                     format="DD-MM-YYYY",
+                                                     picker_mount="#container_tab_plot_gprmc",
+                                                     id='gprmc_date_selector_end',
+                                                     )
+                                yield Input(placeholder='Введите время в формате: HH:MM:SS',
+                                            id='time_end_gprmc')
 
                                 with Container(id='container_b_upd_gprmc_plot'):
                                     yield Button('Обновить график', id='b_upd_gprmc_plot')
@@ -250,13 +260,26 @@ class PlotTab(TabPane):
                 with TabPane(f"График файла: {list(FILE_PATHS.values())[2].split('/')[-1]}"):
                     pass
 
+    @on(Button.Pressed, '#b_upd_gprmc_plot')
+    def update_gprmc_plot(self) -> NoReturn:
+        plt_text = self.query_one('#plot_gprmc', PlotText)
+        time_begin = self.query_one('#time_begin_gprmc', Input).value
+        time_end = self.query_one('#time_end_gprmc', Input).value
+        date_begin = self.query_one('#gprmc_date_selector_begin', DateSelect).value.strftime('%d:%m:%Y')
+        date_end = self.query_one('#gprmc_date_selector_end', DateSelect).value.strftime('%d:%m:%Y')
+
+        date_time_begin = datetime.strptime(date_begin + ' ' + time_begin, '%d:%m:%Y %H:%M:%S')
+        date_time_end = datetime.strptime(date_end + ' ' + time_end, '%d:%m:%Y %H:%M:%S')
+
+        plt_text.update(**PlotArgsCreatorGPGGAGPRMC.create_args_time_longitude_gprmc(date_time_begin, date_time_end))
+
     @on(Button.Pressed, '#b_upd_gpgga_plot')
     def update_gpgga_plot(self) -> NoReturn:
         plt_text = self.query_one('#plot_gpgga', PlotText)
-        date_time_begin = datetime.strptime(self.query_one('#time_begin_gpgga', Input).value, "%H:%M:%S")
-        date_time_end = datetime.strptime(self.query_one('#time_end_gpgga', Input).value, "%H:%M:%S")
+        time_begin = self.query_one('#time_begin_gpgga', Input).value
+        time_end = self.query_one('#time_end_gpgga', Input).value
 
-        plt_text.update(**PlotArgsCreatorGPGGAGPRMC.create_args_time_longitude_gpgga(date_time_begin, date_time_end))
+        plt_text.update(**PlotArgsCreatorGPGGAGPRMC.create_args_time_longitude_gpgga(time_begin, time_end))
 
 
 class MainTabContent(TabbedContent):

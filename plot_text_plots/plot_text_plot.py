@@ -37,7 +37,7 @@ class PlotText(PlotextPlot):
 
     @abstractmethod
     def on_mount(self) -> NoReturn:
-        self.plt.date_form('Y-d-m H:M:S')
+        self.plt.date_form('H:M:S')
         self.plt.title(self._title)
         self.plt.grid(True)
         self.plt.xlabel('Широта')
@@ -55,8 +55,8 @@ class PlotText(PlotextPlot):
     def update(self, **kwargs) -> NoReturn:
         self._x_values = kwargs['x_values']
         self._y_values = kwargs['y_values']
+        self.plt.ylabel(kwargs['y_label'])
         self.plt.xlabel(kwargs['x_label'])
-        self.plt.xlabel(kwargs['y_label'])
         self.replot()
 
     @abstractmethod
@@ -72,7 +72,8 @@ class PlotTextGPGGA(PlotText):
                  name: str | None = None,
                  id: str | None = None,  # pylint:disable=redefined-builtin
                  classes: str | None = None,
-                 disabled: bool = False, ):
+                 disabled: bool = False,
+                 ):
         kwargs = PlotArgsCreatorGPGGAGPRMC.create_args_latitude_longitude_gpgga()
         super().__init__(title=title, name=name, id=id, classes=classes, disabled=disabled, x_values=kwargs['x_values'],
                          y_values=kwargs['y_values'])
@@ -85,7 +86,8 @@ class PlotTextGPRMC(PlotText):
                  name: str | None = None,
                  id: str | None = None,  # pylint:disable=redefined-builtin
                  classes: str | None = None,
-                 disabled: bool = False, ):
+                 disabled: bool = False,
+                 ):
         kwargs = PlotArgsCreatorGPGGAGPRMC.create_args_latitude_longitude_gprmc()
         super().__init__(title=title, name=name, id=id, classes=classes, disabled=disabled, x_values=kwargs['x_values'],
                          y_values=kwargs['y_values'])
