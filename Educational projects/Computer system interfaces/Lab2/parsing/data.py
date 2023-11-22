@@ -1,6 +1,9 @@
 from abc import abstractmethod
 import math
 from datetime import datetime
+from typing import NoReturn
+
+import pytz
 
 import numpy
 
@@ -10,7 +13,11 @@ from application.constants import *
 import pandas as pd
 
 
-class Data(metaclass=Singleton):
+def get_dec_degree(x):
+    return math.modf(x)[1] // 100 + (math.modf(x)[1] % 100) / 60 + (math.modf(x)[0] * 60) / 3600
+
+
+class Data:
     def __init__(self, path: str, df_formats: dict[str: pd.DataFrame] | None = None):
         self._path = path
         self._df_formats = df_formats
@@ -37,12 +44,8 @@ class Data(metaclass=Singleton):
     def get_class_by_path(self, path: str):
         return self if path == self._path else None
 
-    @staticmethod
-    def get_dec_degree(x):
-        return math.modf(x)[1] // 100 + (math.modf(x)[1] % 100) / 60 + (math.modf(x)[0] * 60) / 3600
 
-
-class DataGPGGAGPRMC(Data):
+class DataGPGGAGPRMC(Data, metaclass=Singleton):
     def __init__(self, path: str = GPGGA_GPRMC_PATH):
         super().__init__(path)
         self._df = self.__get_parce_df(self._path)
@@ -52,7 +55,7 @@ class DataGPGGAGPRMC(Data):
         }
 
     def __latitude_and_longitude_to_dec(self, serial: pd.Series):
-        return serial.copy(deep=True).apply(lambda x: float(x)).apply(self.get_dec_degree)
+        return serial.copy(deep=True).apply(lambda x: float(x)).apply(get_dec_degree)
 
     @staticmethod
     def __get_parce_df(path: str):
@@ -74,8 +77,8 @@ class DataGPGGAGPRMC(Data):
         gpgga['Latitude'] = gpgga['Latitude'].apply(lambda x: float(x))
         gpgga['Longitude'] = gpgga['Longitude'].apply(lambda x: float(x))
 
-        gpgga['Latitude'] = gpgga['Latitude'].apply(self.get_dec_degree)
-        gpgga['Longitude'] = gpgga['Longitude'].apply(self.get_dec_degree)
+        gpgga['Latitude'] = gpgga['Latitude'].apply(get_dec_degree)
+        gpgga['Longitude'] = gpgga['Longitude'].apply(get_dec_degree)
 
         gpgga['Latitude'] = self.__latitude_and_longitude_to_dec(gpgga['Latitude'])
         gpgga['Longitude'] = self.__latitude_and_longitude_to_dec(gpgga['Longitude'])
@@ -133,8 +136,9 @@ class DataGPGSVGPRMCGPGSA(Data):
         super().__init__(path)
         self._df = self.__get_parse_from_csv()
         self._df_formats = {
-            'GPGSV': self.__get_parse_gpgsv(),
+            'GPGGA': self.__get_parse_gpgga(),
             'GPRMC': self.__get_parse_gprmc(),
+            'GPGSV': self.__get_parse_gpgsv(),
             'GPGSA': self.__get_parse_gpgsa(),
         }
 
@@ -177,9 +181,15 @@ class DataGPGSVGPRMCGPGSA(Data):
                     df.iloc[row, 20] = '*' + str(df.iloc[row, 7]).split('*')[1]
                     df.iloc[row, 7] = str(df.iloc[row, 7]).split('*')[0]
 
-    def __convert_data_gprmc(self, df):
-        df['Latitude'] = pd.to_numeric(df['Latitude']).apply(lambda x: self.get_dec_degree(x))
-        df['Longitude'] = pd.to_numeric(df['Longitude']).apply(lambda x: self.get_dec_degree(x))
+    def __convert_data_gpgga(self, df: pd.DataFrame) -> NoReturn:
+        df['Latitude'] = pd.to_numeric(df['Latitude']).apply(lambda x: get_dec_degree(x))
+        df['Longitude'] = pd.to_numeric(df['Longitude']).apply(lambda x: get_dec_degree(x))
+        df['Time'] = pd.to_numeric(df['Time']).apply(lambda s: self.get_time_as_seconds(str(s)))
+        df['HDOP'] = pd.to_numeric(df['HDOP'])
+
+    def __convert_data_gprmc(self, df: pd.DataFrame) -> NoReturn:
+        df['Latitude'] = pd.to_numeric(df['Latitude']).apply(lambda x: get_dec_degree(x))
+        df['Longitude'] = pd.to_numeric(df['Longitude']).apply(lambda x: get_dec_degree(x))
         df['Time'] = pd.to_numeric(df['Time']).apply(lambda s: self.get_time_as_seconds(s))
         df['Speed'] = pd.to_numeric(df['Speed'])
 
@@ -196,21 +206,36 @@ class DataGPGSVGPRMCGPGSA(Data):
         return int(t[0] + t[1]) * 3600 + int(t[2] + t[3]) * 60 + int(t[4] + t[5])
 
     def __get_parse_from_csv(self):
-        return pd.read_csv(self.path, sep=',',
-                           names=['Message ID', 'Number of Messages', 'Message Number', 'Satellites in View',
-                                  'Satellite ID1',
-                                  'Elevation1', 'Azimuth1', 'SNR1', 'Satellite ID2', 'Elevation2', 'Azimuth2', 'SNR2',
-                                  'Satellite ID3', 'Elevation3', 'Azimuth3', 'SNR3', 'Satellite ID4', 'Elevation4',
-                                  'Azimuth4',
-                                  'SNR4', 'Checksum'])
-
-    def __get_parse_gpgsv(self):
-        df = self._df[self._df[self._df.columns[0]] == '$GPGSV'].copy()
-        self.__parsing_datatype_gpgsv(df)
+        df = pd.read_csv(self.path, sep=',',
+                         names=['Message ID', 'Number of Messages', 'Message Number', 'Satellites in View',
+                                'Satellite ID1',
+                                'Elevation1', 'Azimuth1', 'SNR1', 'Satellite ID2', 'Elevation2', 'Azimuth2', 'SNR2',
+                                'Satellite ID3', 'Elevation3', 'Azimuth3', 'SNR3', 'Satellite ID4', 'Elevation4',
+                                'Azimuth4',
+                                'SNR4', 'Checksum'])
+        df['Message ID'] = df['Message ID'].apply(lambda t: t[1:])
         return df
 
-    def __get_parse_gprmc(self):
-        df = self._df[self._df[self._df.columns[0]] == '$GPRMC'].iloc[:, 0:13].copy()
+    def __get_parse_gpgsv(self) -> pd.DataFrame:
+        df = self._df[self._df[self._df.columns[0]] == 'GPGSV'].copy()
+        self.__parsing_datatype_gpgsv(df)
+
+        columns_name = ['Azimuth1', 'Azimuth2', 'Azimuth3', 'Azimuth4', 'Elevation1', 'Elevation2', 'Elevation3',
+                        'Elevation4']
+        for name in columns_name:
+            df[name] = pd.to_numeric(df[name])
+
+        return df
+
+    def __get_parse_gpgga(self) -> pd.DataFrame:
+        df = self._df[self._df[self._df.columns[0]] == 'GPGGA'].iloc[:, 0:15]
+        df.columns = ['Message ID', 'Time', 'Latitude', 'N/S', 'Longitude', 'E/W', 'Position', 'Satellites', 'HDOP',
+                      'MSL Altitude', 'Units1', 'Geoid', 'Units2', 'Station ID', 'Checksum']
+        self.__convert_data_gpgga(df)
+        return df
+
+    def __get_parse_gprmc(self) -> pd.DataFrame:
+        df = self._df[self._df[self._df.columns[0]] == 'GPRMC'].iloc[:, 0:13].copy()
         df.iloc[:, 11] = df.iloc[:, 12]
         df = df.iloc[:, 0:12]
         df.columns = ['Message ID', 'Time', 'Status', 'Latitude', 'N/S', 'Longitude', 'E/W', 'Speed',
@@ -219,8 +244,8 @@ class DataGPGSVGPRMCGPGSA(Data):
         self.__convert_data_gprmc(df)
         return df
 
-    def __get_parse_gpgsa(self):
-        df = self._df[self._df[self._df.columns[0]] == '$GPGSA'].iloc[:, 0:19].copy()
+    def __get_parse_gpgsa(self) -> pd.DataFrame:
+        df = self._df[self._df[self._df.columns[0]] == 'GPGSA'].iloc[:, 0:19].copy()
         df.iloc[:, 18] = df.iloc[:, 17]
         df.columns = ['Message ID', 'Mode1', 'Mode2', 'Satellite Used1', 'Satellite Used2', 'Satellite Used3',
                       'Satellite Used4', 'Satellite Used5', 'Satellite Used6', 'Satellite Used7', 'Satellite Used8',
@@ -232,8 +257,8 @@ class DataGPGSVGPRMCGPGSA(Data):
 
         return df
 
-    def available_formats(self):
-        return len(self._df_formats.values())
+    def available_formats(self) -> list[str]:
+        return list(self._df_formats.keys())
 
     def get_df_by_key(self, key: str):
         return self[key]
@@ -244,9 +269,9 @@ class DataGetterByPath(metaclass=Singleton):
         self._data = [DataGPGGAGPRMC(), DataGPGSVGPRMCGPGSA(ALL_FORMATS_1_PATH),
                       DataGPGSVGPRMCGPGSA(ALL_FORMATS_2_PATH)]
 
-    def __getitem__(self, item):
+    def __getitem__(self, item: str):
         for data in self._data:
-            data_class = data[item]
+            data_class = data.get_class_by_path(item)
             if data_class is not None:
                 return data_class
         return None

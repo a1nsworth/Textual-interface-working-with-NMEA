@@ -32,8 +32,8 @@ class DataTableFormat(DataTable):
 
 
 class DataTableGPGGA(DataTableFormat):
-    def __init__(self, id='data_table_gpgga'):
-        super().__init__(id='data_table_gpgga', zebra_stripes=True)
+    def __init__(self, id: str):
+        super().__init__(id=id, zebra_stripes=True)
         self._data_frame = DataGPGGAGPRMC()
         self._setup_table()
 
@@ -64,19 +64,3 @@ class DataTableGPGSVGPRMCGPGSA(DataTableFormat):
     def _setup_table(self) -> NoReturn:
         self.add_columns(*self._data_frame['GPGSV'].columns.tolist())
         self.add_rows(self._data_frame['GPGSV'].values.tolist())
-
-
-class DataTableGetterByPath:
-    def __init__(self):
-        self._data = [DataTableGPGGA(), DataTableGPRMC(), DataTableGPGSVGPRMCGPGSA(ALL_FORMATS_1_PATH),
-                      DataTableGPGSVGPRMCGPGSA(ALL_FORMATS_2_PATH)]
-
-    def __getitem__(self, path: str):
-        for data in self._data:
-            data_class = data.df[path]
-            if data_class is not None:
-                return data_class
-        return None
-
-    def get_data_class_by_path(self, path: str):
-        return self[path]

@@ -3,7 +3,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import NoReturn, List
 
-import textual
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container
@@ -11,13 +10,12 @@ from textual.message import Message
 from textual.widgets import TabbedContent, TabPane, Select, Button, Input
 from textual_datepicker import DateSelect
 
-import plotext as pltx
-
-from parsing.data import DataGPGSVGPRMCGPGSA, DataGetterByPath, DataGPGGAGPRMC
 from application.constants import FILE_PATHS, FORMATS
-from data_tables.data_table import DataTableGPGGA, DataTableFormat, DataTableGetterByPath
-from plot_text_plots.plot_text_plot import PlotText, PlotTextGPGGA, PlotTextGPRMC
+from data_tables.data_table import DataTableGPGGA, DataTableFormat
+from parsing.data import DataGetterByPath
 from plot.plot_creator import PlotArgsCreatorGPGGAGPRMC
+from plot_text_plots.plot_text_plot import PlotText, PlotTextGPGGA, PlotTextGPRMC, SkyPlotSatellite
+from matplotlib import pyplot as plt
 
 
 class DataTab(TabPane):
@@ -81,7 +79,7 @@ class DataTab(TabPane):
         def compose(self) -> ComposeResult:
             with Container(id='data_container_grid'):
                 with Container(id='left_data_table_panel'):
-                    yield DataTableGPGGA()
+                    yield DataTableGPGGA(id='data_table')
 
                 with Container(id='data_right_top_container'):
                     yield Select(options=[(s, s) for s in FILE_PATHS.values()],
@@ -109,7 +107,7 @@ class DataTab(TabPane):
     @dataclass
     class ErrorNoAvailableFormat(Message):
         format: str
-        available_fmt: List[str]
+        available_fmt: list[str]
 
     @dataclass
     class ErrorNoAvailableImplementation(Message):
@@ -135,30 +133,29 @@ class DataTab(TabPane):
 
     @on(Button.Pressed, '#b_upd_table')
     def update_table(self) -> NoReturn:
-        table = self.query_one(DataTableFormat)
-        path_file = self.query_one('#select_file_for_output_table', Select)
-        table_format = self.query_one('#select_format_table', Select)
+        table: DataTableFormat = self.query_one('#data_table', DataTableFormat)
+        select_path: Select = self.query_one('#select_file_for_output_table', Select)
+        select_format: Select = self.query_one('#select_format_table', Select)
 
-        if table_format.value is None:
+        if select_format.value is None:
             self.post_message(self.ErrorSelectFormat())
             return
-        if path_file.value is None:
+        if select_path.value is None:
             self.post_message(self.ErrorSelectPath())
             return
 
-        df = DataTableGetterByPath().get_data_class_by_path(path_file.value)
+        df = DataGetterByPath()[select_path.value]
 
         if df is None:
-            self.post_message(self.ErrorNoAvailableFormat(table_format.value, table.df.available_formats()))
+            self.post_message(self.ErrorNoAvailableImplementation(select_path.value))
             return
-        if path_file.value != table.df.path:
-            # self.post_message(self.ErrorNoAvailableImplementation(path_file.value))
-            # return
-            pass
+        if df[select_format.value] is None:
+            self.post_message(self.ErrorNoAvailableFormat(select_format.value, table.df.available_formats()))
+            return
 
         table.clear(True)
-        table.add_columns(*df.columns.tolist())
-        table.add_rows(df.values.tolist())
+        table.add_columns(*df[select_format.value].columns.tolist())
+        table.add_rows(df[select_format.value].values.tolist())
 
 
 class PlotTab(TabPane):
@@ -208,11 +205,13 @@ class PlotTab(TabPane):
             }
         """
 
-    def __init__(self, title: str = 'Графики'):
-        super().__init__(title=title)
+    class MainContentContainer(Container):
+        """Контейнер Данных"""
 
-    def compose(self) -> ComposeResult:
-        with TabPane('Графики', id='tab_plots'):
+        def __init__(self):
+            super().__init__(id='main_content_container_plot_tab')
+
+        def compose(self) -> ComposeResult:
             with TabbedContent():
                 with TabPane(f"График файла: {list(FILE_PATHS.values())[0].split('/')[-1]}"):
                     with TabbedContent():
@@ -220,6 +219,16 @@ class PlotTab(TabPane):
                             with Container(id='container_tab_plot_gpgga'):
                                 with Container(id='container_plot_gpgga'):
                                     yield PlotTextGPGGA(id='plot_gpgga')
+
+                                with Container(id='type_plot_gpgga'):
+                                    yield Select(id='select_type_plot_gpgga',
+                                                 prompt='Выберите отображаемую зависимость',
+                                                 options=[
+                                                     ('Зависимость Долготы от Широты', 0),
+                                                     ('Зависимость Времени от Широты', 1),
+                                                     ('Зависимость Времени от Долготы', 2),
+                                                 ], )
+
                                 with Container(id='container_right_gpgga'):
                                     with Container(id='container_input_date_gpgga'):
                                         yield Input(placeholder='Введите время начала (в формате: HH:MM:SS)',
@@ -233,6 +242,15 @@ class PlotTab(TabPane):
                             with Container(id='container_tab_plot_gprmc'):
                                 with Container(id='container_plot_gprmc'):
                                     yield PlotTextGPRMC(id='plot_gprmc')
+
+                                with Container(id='type_plot_gprmc'):
+                                    yield Select(id='select_type_plot_gprmc',
+                                                 prompt='Выберите отображаемую зависимость',
+                                                 options=[
+                                                     ('Зависимость Долготы от Широты', 0),
+                                                     ('Зависимость Даты и Времени от Широты', 1),
+                                                     ('Зависимость Даты и Времени от Долготы', 2),
+                                                 ], )
 
                                 with Container(id='data_select_gprmc_container_begin'):
                                     yield DateSelect(placeholder="Выберите дату начала",
@@ -255,10 +273,15 @@ class PlotTab(TabPane):
                                 with Container(id='container_b_upd_gprmc_plot'):
                                     yield Button('Обновить график', id='b_upd_gprmc_plot')
 
-                with TabPane(f"График файла: {list(FILE_PATHS.values())[1].split('/')[-1]}"):
-                    pass
-                with TabPane(f"График файла: {list(FILE_PATHS.values())[2].split('/')[-1]}"):
-                    pass
+                with TabPane(f"График спутников"):
+                    yield SkyPlotSatellite('Зенитные углы спутников как функции их азимутов', id='sky_plot')
+
+    def __init__(self, title: str = 'Графики'):
+        super().__init__(title=title)
+
+    def compose(self) -> ComposeResult:
+        with TabPane(title=self._title, id='tab_plots'):
+            yield self.MainContentContainer()
 
     @on(Button.Pressed, '#b_upd_gprmc_plot')
     def update_gprmc_plot(self) -> NoReturn:

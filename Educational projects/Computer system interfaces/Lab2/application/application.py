@@ -1,6 +1,7 @@
 from pathlib import Path
 from typing import NoReturn
 
+from matplotlib import pyplot as plt
 from textual import on
 from textual.app import App, ComposeResult
 from textual.message import Message
